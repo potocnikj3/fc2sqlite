@@ -1,6 +1,5 @@
 import numpy as np
-#from epygram.geometries.VGeometry import hybridP2pressure, hybridP2altitude
-
+from epygram.profiles import hybridP2masspressure
 from .logger import logger
 
 #####################################
@@ -63,7 +62,7 @@ def param_apply_function(param, station_list):
         P = param["data"][0]
         Q = param["data"][1]
         T = param["data"][2]
-        return Q_to_RH(P, Q, T)
+        return PQT_to_RH(P, Q, T)
 
     elif param['function'] == "PQT_to_Td":
         if nfields != 3:
@@ -74,15 +73,28 @@ def param_apply_function(param, station_list):
         return PQT_to_Td(P, Q, T)
 
     elif param['function'] == "hybrid_to_p":
-        # TODO
-        logger.warning("3D interpolation is not yet implemented")
-        return None
+        
+        grid_levels = param["geo"]["grid_levels"]
+        target_p = param["level"]
+
+        A = [level[1]['Ai'] for level in grid_levels][1:]
+        B = [level[1]['Bi'] for level in grid_levels][1:]
+
+        surfP = np.exp(param["data"][0])
+
+        paramdata = param["data"][1:]
+
+        vertP = hybridP2masspressure(A, B, surfP, 'arithmetic') / 100
+
+        result = log_interpolation(target_p, vertP, paramdata)
+
+        return result
 
     else:
         logger.error("Unknown function %s.", param['function'])
         return None
 
-def Q_to_RH(P, Q, T):
+def PQT_to_RH(P, Q, T):
     # Returns relative humidity (fraction, 0–1).
     # Inputs: pressure P (hPa), specific humidity Q (kg/kg), temperature T (K).
     # Uses Tetens formula for saturation vapor pressure (over water/ice).
@@ -97,7 +109,7 @@ def PQT_to_Td(P, Q, T):
     # Returns dew point temperature Td (K).
     # Inputs: pressure p (hPa), specific humidity Q (kg/kg), temperature T (K).
     # Computes relative humidity first, then applies Clausius–Clapeyron approximation.
-    RH = Q_to_RH(P, Q, T)
+    RH = PQT_to_RH(P, Q, T)
     return RH_to_Td(RH, T)
 
 def TTd_to_RH(T, Td):
@@ -113,7 +125,7 @@ def PTTd_to_Q(P, T, Td):
     # Relative humidity is computed using Clausius–Clapeyron approximation,
     # then vapor pressure is obtained via Tetens formula for saturation vapor pressure.
 
-    RH = Td_to_RH(T, Td)
+    RH = TTd_to_RH(T, Td)
 
     T_C = T - 273.15
 
@@ -174,9 +186,32 @@ def log_interpolation(x_target, x, y):
     if np.any(x <= 0) or np.any(x_target <= 0):
         raise ValueError("log_interpolation: x and x_target must be > 0")
 
-    idx = np.argsort(x)
-    x = x[idx]
-    y = y[idx]
+     # --- 1D case ---
+    if x.ndim == 1:
+        return np.interp(np.log(x_target), np.log(x), y)
+
+    # --- 2D case ---
+    elif x.ndim == 2:
+
+        nlevels, nstations = x.shape
+
+        result = np.empty((len(x_target), nstations))
+
+        for i in range(nstations):
+
+            xp = x[:, i]
+            fp = y[:, i]
+            
+         # np.interp requires ascending x
+            order = np.argsort(xp)
+            
+            result[:, i] = np.interp(
+                np.log(x_target),
+                np.log(xp[order]),
+                fp[order]
+            )
+
+        return result
 
     y_interp = np.interp(np.log(x_target), np.log(x), y)
 

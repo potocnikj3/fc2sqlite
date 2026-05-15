@@ -37,9 +37,9 @@ def points_restrict_fa(fafile, plist):
     is_in = fafile.geometry.point_is_inside_domain_ll(
             lon = plist["lon"],
             lat = plist["lat"],
-            subzone = "CI"
+            subzone="C"
             )
-    p1 = plist[ is_in ].copy()
+    p1 = plist[ is_in ].copy().reset_index(drop=True)
     return(p1)
 
 def get_geo_fa(fafile):
@@ -71,6 +71,7 @@ def get_geo_fa(fafile):
         # FIXME
         "rotate_wind":True,
         "wrap_x": False,
+        "grid_levels": fafile.geometry.vcoordinate.grid['gridlevels']
     }
 #    if gridtype in ["regular_ll", "rotated_ll"]:
 #        result["dx"] = gg["iDirectionIncrementInDegrees"]

@@ -1,6 +1,7 @@
 import sqlite3
 import os
 from contextlib import closing
+import numpy as np
 from .logger import logger
 #import logging
 #logger = logging.getLogger(__name__)
@@ -52,18 +53,17 @@ def create_table(data_vector, station_list, param, fcdate, leadtime, model_name)
         prim_keys.append("elev")
     data = station_list[prim_keys].copy()
     # NOTE: only deterministic mnodels for now! No EPS.
-    data[model_name] = data_vector
-
     # prepare SQLITE output
     fcd = int(fcdate.timestamp())
     vad = int(fcdate.timestamp() + leadtime)
-
+    
     data["fcst_dttm"] = fcd
     # NOTE: currently FCTABLE still expects leadtime in hours!
     data["lead_time"] = leadtime / 3600.0
     data["valid_dttm"] = vad
     data["parameter"] = param["harp_param"]
     data["units"] = param["units"]
+    
     logger.debug("SQLITE: writing parameter %s", param["harp_param"])
     # model_elevation only relevant for T2m
     # NOTE: we can not yet read model elevation from clim file!
@@ -79,9 +79,19 @@ def create_table(data_vector, station_list, param, fcdate, leadtime, model_name)
         if "elev" in data.columns.to_numpy().tolist():
             data = data.drop("elev", axis=1)
 
-    if param["level"] is not None and param["level_name"] is not None:  #  "level"]):
-        data[param["level_name"]] = int(param["level"])
-    return data
+    if param["level"] is None:
+        data.insert(3, model_name, data_vector)
+        return data
+    
+    else:
+        p_levels = param["level"]
+        n_stations = len(data)
+        
+        data_expanded = data.loc[data.index.repeat(len(p_levels))].reset_index(drop=True)
+        data_expanded.insert(3,"p", np.tile(p_levels, n_stations))
+        data_expanded.insert(4,model_name, data_vector.flatten(order="F"))
+        
+        return data_expanded
 
 
 def write_to_sqlite(data, sqlite_file, param, model_name):
@@ -156,15 +166,16 @@ def db_cleanup(param, fcd, leadtime, con):
     colnames = [x[0] for x in cn1]
 
     if param["level_name"] in colnames:
+        levels = [int(lv) for lv in param["level"]]
         lname = param["level_name"]
-        parlev = int(param["level"])
-        cleanup = cleanup + f" AND {lname}=?"
+        placeholders = ",".join(["?"] * len(levels))
+        cleanup += f" AND {lname} IN ({placeholders})"
         cur.execute(
             cleanup,
             (
                 float(fcd),
                 float(leadtime),
-                int(parlev),
+                *levels
             ),
         )
     else:

@@ -293,6 +293,7 @@ def parse_parameter_list_fa(param_list, nlev):
                 pid = deepcopy(param)
                 pid["data"] = [None] * nfields
                 pid["geo"] = None
+                pid["level_name"] = "p"
                 param_cmb_list.append(pid)
 
 
@@ -697,10 +698,10 @@ def parse_fa_file(
                 # NOTE: the column name for data gets an extra "_det"
                 #       as required by HARP
                 if 'function' in param:
-                    dvect = call_function(param['function'], data_vector)
+                    dvect = param_apply_function(param['function'], data_vector)
                 else:
                     dvect = data_vector
-                data = create_table(
+                table = create_table(
                         dvect,
                         station_list,
                         param,
@@ -708,7 +709,7 @@ def parse_fa_file(
                         leadtime,
                         model_name + "_det",
                     )
-                write_to_sqlite(data, sqlite_file, param, model_name + "_det")
+                write_to_sqlite(table, sqlite_file, param, model_name + "_det")
 
             # if the field also occurs in combined fields (can be more than one!), put in cache
             for param in cmb_list:
@@ -724,10 +725,10 @@ def parse_fa_file(
         if data_vector is not None:
             logger.debug("SQLITE: writing combined field")
             sqlite_file = sqlite_name(param, fcdate, model_name, sqlite_template)
-            data = create_table(
+            table = create_table(
                 data_vector, station_list, param, fcdate, leadtime, model_name + "_det"
             )
-            write_to_sqlite(data, sqlite_file, param, model_name + "_det")
+            write_to_sqlite(table, sqlite_file, param, model_name + "_det")
     
     logger.info(
         "SQLITE: Total %i records. %i matching of which %i direct and %i combined.",
