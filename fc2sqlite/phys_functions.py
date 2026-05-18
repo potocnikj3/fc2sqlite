@@ -22,6 +22,50 @@ eps = R_d / R_w
 def param_apply_function(param, station_list):
     nfields = len(param["data"])
     parname = param["harp_param"]
+    
+    if param["level"] is not None:
+        levels = param["level"]
+        param["level"] = None
+        nlev = param["data"].shape[0]
+        nfields = param["data"].shape[1]
+        nstat = param["data"].shape[2]
+        
+        if isinstance(param["function"], list):
+            if "hybrid_to_p" in param["function"]:
+                result = np.full((nlev,1, nstat), np.nan)
+                func = param["function"][0] if param["function"][1] == "hybrid_to_p" else param["function"][1]
+                surfP = param["data"][:,0:1,:]
+                temp = param["data"][:,1:,:]
+                for i in range(nlev):
+                    level_data = temp[i,:,:]
+                    param_tmp = param.copy()
+                    param_tmp["data"] = level_data
+                    param_tmp["function"] = func
+                    level_result = param_apply_function(param_tmp,station_list)
+                    result[i,0,:] = level_result
+                param["data"] = np.concatenate((surfP, result), axis=1)
+                param["function"] = "hybrid_to_p"
+                param["levels"] = levels
+                result = param_apply_function(param, station_list)
+                return result
+                
+                
+                    
+            else:
+                result = np.full((nlev, nstat), np.nan)
+                for i in range(nlev):
+                    level_data = param["data"][i,:,:]
+                    param_tmp = param.copy()
+                    param_tmp["data"] = level_data
+                    level_result = param_apply_function(param_tmp,station_list)
+                    result[i,:] = level_result
+                return result
+        
+        else:
+            if param["function"] == "hybrid_to_p":
+                param["levels"] = levels
+                result = param_apply_function(param, station_list)
+                return result
 
     if param['function'] == 'vector_angle':
         param["units"] = "deg"
@@ -43,11 +87,8 @@ def param_apply_function(param, station_list):
         return direction_from
 
     elif param['function'] == 'vector_norm':
-        npoints = len(param["data"][0])
-        result = np.zeros(npoints)
-        for ff in range(nfields):
-            result += param["data"][ff] * param["data"][ff]
-        return np.sqrt(result)
+        data = np.asarray(param["data"])
+        return np.sqrt(np.sum(data**2, axis=0))
 
     elif param['function'] == 'sum':
         npoints = len(param["data"][0])
@@ -56,7 +97,7 @@ def param_apply_function(param, station_list):
             result += param["data"][ff]
         return result
 
-    elif param['function'] == "Q_to_RH":
+    elif param['function'] == "PQT_to_RH":
         if nfields != 3:
             logger.error("ERROR: RH from Q needs exactly 3 components.")
         P = param["data"][0]
@@ -75,18 +116,20 @@ def param_apply_function(param, station_list):
     elif param['function'] == "hybrid_to_p":
         
         grid_levels = param["geo"]["grid_levels"]
-        target_p = param["level"]
+        target_p = param["levels"]
 
         A = [level[1]['Ai'] for level in grid_levels][1:]
         B = [level[1]['Bi'] for level in grid_levels][1:]
 
-        surfP = np.exp(param["data"][0])
-
-        paramdata = param["data"][1:]
+        surfP = np.exp(param["data"][0,0,:])
+        
+        paramdata = param["data"][:,1,:]
 
         vertP = hybridP2masspressure(A, B, surfP, 'arithmetic') / 100
 
         result = log_interpolation(target_p, vertP, paramdata)
+        
+        param["level"] = target_p
 
         return result
 
@@ -98,10 +141,11 @@ def PQT_to_RH(P, Q, T):
     # Returns relative humidity (fraction, 0–1).
     # Inputs: pressure P (hPa), specific humidity Q (kg/kg), temperature T (K).
     # Uses Tetens formula for saturation vapor pressure (over water/ice).
+    Tc = T - 273.15
     e = (Q * P) / (eps + (1.0 - eps) * Q)
-    es = np.where(T > 0, 
-            6.1078 * np.exp((17.27 * T) / (T + 237.3)),
-            6.1078 * np.exp((21.875 * T) / (T + 265.5)))
+    es = np.where(Tc > 0, 
+            6.1078 * np.exp((17.27 * Tc) / (Tc + 237.3)),
+            6.1078 * np.exp((21.875 * Tc) / (Tc + 265.5)))
     RH = e / es
     return RH
 
@@ -110,7 +154,7 @@ def PQT_to_Td(P, Q, T):
     # Inputs: pressure p (hPa), specific humidity Q (kg/kg), temperature T (K).
     # Computes relative humidity first, then applies Clausius–Clapeyron approximation.
     RH = PQT_to_RH(P, Q, T)
-    return RH_to_Td(RH, T)
+    return TRH_to_Td(T, RH)
 
 def TTd_to_RH(T, Td):
     # Returns relative humidity (fraction, 0–1).
@@ -139,7 +183,7 @@ def PTTd_to_Q(P, T, Td):
 
     return q
 
-def RH_to_Td(T, RH):
+def TRH_to_Td(T, RH):
     # Returns dew point temperature Td (K).
     # Inputs: temperature T (K), relative humidity RH (fraction, 0–1).
     # Uses Clausius–Clapeyron approximation (constant latent heat).

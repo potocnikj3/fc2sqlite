@@ -223,7 +223,7 @@ def parse_parameter_list_grib(param_list):
                 param_cmb_list.append(pid)
     return param_sgl_list, param_cmb_list
 
-def parse_parameter_list_fa(param_list, nlev):
+def parse_parameter_list_fa(param_list, nlev, nstat):
     """Parse a (json) structure of required parameters.
 
     Handle single vs combined fields, model levels etc.
@@ -284,14 +284,14 @@ def parse_parameter_list_fa(param_list, nlev):
                 pid["geo"] = None
                 param_cmb_list.append(pid)
 
-            elif param['function'] == "hybrid_to_p":
+            elif param['function'] == "hybrid_to_p" or "hybrid_to_p" in param["function"]:
                 # Special case: all the "levels" are to be combined and interpolated vertically
                 # TODO: something better than caching all hybrid levels for every pressure...
                 # FIXME: we need to know the number of model levels!
                 param['fa_id'] = fa_expand_3d_names( param['fa_id'], nlev)
                 nfields = len(param['fa_id'])
                 pid = deepcopy(param)
-                pid["data"] = [None] * nfields
+                pid["data"] = np.full((nlev, nfields, nstat), np.nan)
                 pid["geo"] = None
                 pid["level_name"] = "p"
                 param_cmb_list.append(pid)
@@ -328,7 +328,7 @@ def parse_parameter_list_fa(param_list, nlev):
                     logger.debug("COMBI LEVEL")
                     logger.debug(pid)
                     param_cmb_list.append(pid)
-
+    
     return param_sgl_list, param_cmb_list
 
 
@@ -384,8 +384,27 @@ def cache_field_fa(pname, data, param_cmb_list, geo):
     for cmb in param_cmb_list:
         nfields = len(cmb["fa_id"])
         for ff in range(nfields):
-            if cmb["fa_id"][ff] == pname:
-                logger.debug("Caching output for %s", cmb["harp_param"])
+            if isinstance(cmb["fa_id"][ff], list):
+                for i in range(len(cmb["fa_id"][ff])):
+                    if cmb["fa_id"][ff][i] == pname:
+                        if cmb["level"] is not None:
+                            cmb["data"][i, ff, :] = data
+                        else:
+                            cmb["data"][ff] = np.array(data)
+                        if cmb["geo"] is None:
+                            cmb['geo'] = geo
+                        # FIXME: we assume the unit is the same for all constituents and result
+                        #        this is NOT the case for e.g. wind direction
+                        #        probably should be fixed in the final combination function
+                        # FIXME: these have to be done when creating the cache!
+                        #cmb["units"] = param["units"]
+                        #cmb["level"] = param["level"]
+                        #cmb["level_name"] = param["level_name"]
+                        #if cmb["geo"] is None:
+                        #    cmb["geo"] = geo
+                        count += 1
+                        continue
+            elif cmb["fa_id"][ff] == pname:
                 cmb["data"][ff] = np.array(data)
                 if cmb["geo"] is None:
                     cmb['geo'] = geo
@@ -611,8 +630,24 @@ def parse_fa_file(
         # split into "combined" and "direct" parameters
         # FIXME: I need to open the FA file before parsing the parameters,
         #        because 3d interpolation needs knowledge of NLEV before building cache.
+        nstation_orig = station_list.shape[0]
+        station_list = points_restrict_fa(fafile, station_list)
+        nstation_select = station_list.shape[0]
+        if station_list.shape[0] == 0:
+            # In this case, we can not extract any points
+            logger.warning("SQLite: no stations inside model domain!")
+            error_occured = True
+            #fafile.close()
+            return(gt,gi)
+        logger.info(
+                    "SQLITE: selected %i stations inside domain from %i.",
+                    station_list.shape[0],
+                    nstation_orig,
+                )
+        
         nlev = len(fafile.geometry.vcoordinate.levels)
-        param_sgl_list, param_cmb_list = parse_parameter_list_fa(param_list, nlev)
+        nstat = len(station_list)
+        param_sgl_list, param_cmb_list = parse_parameter_list_fa(param_list, nlev, nstat)
         param_cmb_cache = [None] * len(param_cmb_list)
         if len(param_cmb_list) > 0:
             for pp in range(len(param_cmb_cache)):
@@ -634,24 +669,10 @@ def parse_fa_file(
         logger.debug("fcdate = %s \n leadtime = %s", fcdate, leadtime)
         logger.debug("geo = %s", geo)
 
-        nstation_orig = station_list.shape[0]
-        station_list = points_restrict_fa(fafile, station_list)
-        nstation_select = station_list.shape[0]
-        if station_list.shape[0] == 0:
-            # In this case, we can not extract any points
-            logger.warning("SQLite: no stations inside model domain!")
-            error_occured = True
-            #fafile.close()
-            return(gt,gi)
-        logger.info(
-                    "SQLITE: selected %i stations inside domain from %i.",
-                    station_list.shape[0],
-                    nstation_orig,
-                )
 
     # TODO: actually should loop over the union of single fields and combined
         param_sgl_names = set([ p['fa_id'] for p in param_sgl_list])
-        param_cmb_names = set([ x for p in param_cmb_list for x in p['fa_id']])
+        param_cmb_names = set([ x for p in param_cmb_list for item in p['fa_id'] for x in (item if isinstance(item, list) else [item])])
         all_names = set.union(param_sgl_names, param_cmb_names)
         weights = None
 
@@ -664,7 +685,7 @@ def parse_fa_file(
             gi += 1
 
             sgl_list = [ p for p in param_sgl_list if p['fa_id'] == pname ]
-            cmb_list = [ p for p in param_cmb_list if pname in p['fa_id'] ]
+            cmb_list = [ p for p in param_cmb_list if any(pname in (item if isinstance(item,list) else item) for item in p["fa_id"]) ]
 
             # you could in theory have multiple single vairables depending on 1 FA field
             # probably very rare...

@@ -40,26 +40,29 @@
   "function":"hybrid_to_p"
 },
 
-{ "harp_param":"RH",
+{ "harp_param":"Q",
   "method":"linear",
-  "fa_id" : "P?????HUMI_RELAT",
+  "fa_id" : ["SURFPRESSION", "S???HUMI.SPECIFI"],
   "level": "$p_levels",
-  "units":"fraction"
+  "units":"kg / kg",
+  "function":"hybrid_to_p"
 },
+
 
 { "harp_param" : "S",
   "method" : "linear",
-  "fa_id" : [ "P?????VENT.MERI", "P?????VENT.ZONA" ],
+  "fa_id" : [ "SURFPRESSION", "S???WIND.U.PHYS", "S???WIND.V.PHYS" ],
   "level": "$p_levels",
   "units":"m/s",
-  "function":"vector_norm"
+  "function": ["vector_norm","hybrid_to_p"]
 },
 
 { "harp_param" : "D",
   "method" : "linear",
-  "fa_id" : [ "P?????VENT.MERI", "P?????VENT.ZONA" ],
+  "fa_id" : [ "SURFPRESSION", "S???WIND.U.PHYS", "S???WIND.V.PHYS" ],
+  "units" : "degrees",
   "level": "$p_levels",
-  "function":"vector_angle"
+  "function":["vector_angle", "hybrid_to_p"]
 },
 
 { "harp_param" : "S10m",

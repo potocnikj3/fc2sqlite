@@ -16,7 +16,6 @@ def get_proj4_fa(fafile):
         proj4["lat_2"] = proj4['lat_1']
     return proj4
 
-
 def fa_fix_level(fa_name, fa_level):
     # expected fa_name: S???SOMETHING, P?????SOMETHING, H?????SOMETHING
     lev_type = fa_name[0] # S, P, H ...
@@ -27,10 +26,15 @@ def fa_fix_level(fa_name, fa_level):
     return(result)
 
 def fa_expand_3d_names(fa_names, nlev):
-    fixed_fields = [ x for x in fa_names if x.find("?") == -1 ]
-    level_fields = [ x for x in fa_names if x.find("?") > -1 ]
-    result = fixed_fields + [ fa_fix_level(x, l) for l in range(1,nlev+1) for x in level_fields ]
-    return result
+    fixed_fields = [x for x in fa_names if "?" not in x]
+    level_fields = [x for x in fa_names if "?" in x]
+
+    expanded_levels = [
+        [fa_fix_level(field, l) for l in range(1, nlev + 1)]
+        for field in level_fields
+    ]
+
+    return fixed_fields + expanded_levels
 
 def points_restrict_fa(fafile, plist):
     # Keep only stations inside the resource domain
